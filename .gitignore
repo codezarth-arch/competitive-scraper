@@ -1,0 +1,14 @@
+# Ambiente virtual
+venv/
+env/
+
+# Banco de dados local (para não expor dados ou travar o git)
+data/database.db
+
+# Cache do Python
+__pycache__/
+*.pyc
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
