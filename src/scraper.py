@@ -1,55 +1,73 @@
-# src/scraper.py
-import requests
-from bs4 import BeautifulSoup
-import hashlib
-import re
+import urllib.request
+import urllib.error
+import html.parser
+import random
 
-class WebScraper:
-    def __init__(self, timeout=10):
-        self.timeout = timeout
-        # Headers simulando um navegador real para evitar bloqueios básicos
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-        }
+# Lista de User-Agents legítimos para simular diferentes navegadores reais e evitar bloqueios
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.2210.91'
+]
 
-    def fetch_and_clean(self, url):
-        """Faz o request HTTP e limpa elementos voláteis do HTML para evitar falsos positivos."""
-        try:
-            response = requests.get(url, headers=self.headers, timeout=self.timeout)
-            response.raise_for_status()
-            
-            raw_html = response.text
-            cleaned_html = self._clean_volatile_content(raw_html)
-            content_hash = hashlib.sha256(cleaned_html.encode('utf-8')).hexdigest()
-            
-            return {
-                "success": True,
-                "raw_html": raw_html,
-                "cleaned_html": cleaned_html,
-                "content_hash": content_hash,
-                "error": None
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "raw_html": None,
-                "cleaned_html": None,
-                "content_hash": None,
-                "error": str(e)
-            }
+class SimpleHTMLSelector(html.parser.HTMLParser):
+    def __init__(self, target_tag, target_class=None):
+        super().__init__()
+        self.target_tag = target_tag.lower()
+        self.target_class = target_class
+        self.inside_target = False
+        self.extracted_text = []
 
-    def _clean_volatile_content(self, html_content):
-        """Remove elementos dinâmicos que mudam sozinhos (scripts, meta tags, etc)."""
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Remove tags que causam ruído na análise estrutural
-        for element in soup(["script", "style", "noscript", "meta"]):
-            element.decompose()
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == self.target_tag:
+            if not self.target_class:
+                self.inside_target = True
+            else:
+                attr_dict = dict(attrs)
+                classes = attr_dict.get('class', '').split()
+                if self.target_class in classes:
+                    self.inside_target = True
+
+    def handle_endtag(self, tag):
+        if tag.lower() == self.target_tag and self.inside_target:
+            self.inside_target = False
+
+    def handle_data(self, data):
+        if self.inside_target:
+            cleaned = data.strip()
+            if cleaned:
+                self.extracted_text.append(cleaned)
+
+def extract_element_text(html_content: str, tag: str = "body", css_class: str = None) -> str:
+    parser = SimpleHTMLSelector(tag, css_class)
+    parser.feed(html_content)
+    return " ".join(parser.extracted_text)
+
+def fetch_page_content(url: str, css_selector: str = None) -> str:
+    """
+    Realiza o download do HTML utilizando um User-Agent rotativo aleatório 
+    e filtra o elemento via seletor CSS, caso especificado.
+    """
+    selected_agent = random.choice(USER_AGENTS)
+    headers = {
+        'User-Agent': selected_agent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html_content = response.read().decode('utf-8', errors='ignore')
             
-        text_content = soup.get_text(separator=' ', strip=True)
-        
-        # Limpa padrões de data e hora dinâmicos do texto
-        cleaned_text = re.sub(r'\d{2}/\d{2}/\d{4} \d{2}:\d{2}', '', text_content)
-        
-        return cleaned_text
+            if css_selector and "." in css_selector:
+                tag, class_name = css_selector.split(".", 1)
+                filtered = extract_element_text(html_content, tag, class_name)
+                return filtered if filtered else html_content
+                
+            return html_content
+    except Exception as e:
+        print(f"[SCRAPER] Erro ao aceder {url} com o agente {selected_agent[:30]}...: {e}")
+        return ""

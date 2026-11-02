@@ -1,50 +1,54 @@
-# src/database.py
 import sqlite3
-from contextlib import contextmanager
 import os
 
-# Caminho para o banco de dados dentro da pasta 'data'
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'database.db')
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "nexus.db")
 
-def init_db():
-    """Inicializa o banco de dados e cria as tabelas necessárias."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        
-        # Tabela para armazenar o histórico de versões e o payload bruto
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS page_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                raw_html TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Tabela de Alertas estruturados para mudanças detectadas
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT NOT NULL,
-                change_type TEXT NOT NULL,
-                description TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-
-@contextmanager
-def get_db_connection():
-    """Gerenciador de contexto para conexões seguras com transações ACID."""
+def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS targets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            css_selector TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        cursor.execute("ALTER TABLE targets ADD COLUMN css_selector TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_id INTEGER,
+            content TEXT NOT NULL,
+            captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (target_id) REFERENCES targets (id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_id INTEGER,
+            message TEXT NOT NULL,
+            severity TEXT DEFAULT 'info',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (target_id) REFERENCES targets (id)
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+init_db()
